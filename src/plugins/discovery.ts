@@ -476,6 +476,19 @@ function resolvePackageEntrySource(params: {
     rejectHardlinks: params.rejectHardlinks ?? true,
   });
   if (!opened.ok) {
+    if (opened.reason === "path") {
+      // File missing (ENOENT) — skip, not a security violation.
+      return null;
+    }
+    if (opened.reason === "io") {
+      // Filesystem error (EACCES, EMFILE, etc.) — warn but don't abort.
+      params.diagnostics.push({
+        level: "warn",
+        message: `extension entry unreadable (I/O error): ${params.entryPath}`,
+        source: params.sourceLabel,
+      });
+      return null;
+    }
     params.diagnostics.push({
       level: "error",
       message: `extension entry escapes package directory: ${params.entryPath}`,
@@ -792,6 +805,7 @@ function discoverBundledMetadataInDirectory(params: {
       continue;
     }
     const setupSource = resolveBundledPluginGeneratedPath(rootDir, entry.setupSource);
+    const packageManifest = readPackageManifest(rootDir, false);
     addCandidate({
       candidates: params.candidates,
       diagnostics: params.diagnostics,
@@ -803,10 +817,17 @@ function discoverBundledMetadataInDirectory(params: {
       origin: "bundled",
       ownershipUid: params.ownershipUid,
       manifest: {
-        ...(entry.packageName ? { name: entry.packageName } : {}),
-        ...(entry.packageVersion ? { version: entry.packageVersion } : {}),
-        ...(entry.packageDescription ? { description: entry.packageDescription } : {}),
-        ...(entry.packageManifest ? { openclaw: entry.packageManifest } : {}),
+        ...packageManifest,
+        ...(!packageManifest?.name && entry.packageName ? { name: entry.packageName } : {}),
+        ...(!packageManifest?.version && entry.packageVersion
+          ? { version: entry.packageVersion }
+          : {}),
+        ...(!packageManifest?.description && entry.packageDescription
+          ? { description: entry.packageDescription }
+          : {}),
+        ...(!packageManifest?.openclaw && entry.packageManifest
+          ? { openclaw: entry.packageManifest }
+          : {}),
       },
       packageDir: rootDir,
       bundledManifest: entry.manifest,
