@@ -1,12 +1,16 @@
-import type { MediaUnderstandingProvider } from "openclaw/plugin-sdk/media-understanding";
-import { transcribeOpenAiCompatibleAudio } from "openclaw/plugin-sdk/media-understanding";
+import {
+  transcribeOpenAiCompatibleAudio,
+  type MediaUnderstandingProvider,
+} from "openclaw/plugin-sdk/media-understanding";
 
-export const DEFAULT_GROQ_AUDIO_BASE_URL = "https://api.groq.com/openai/v1";
+const DEFAULT_GROQ_AUDIO_BASE_URL = "https://api.groq.com/openai/v1";
 const DEFAULT_GROQ_AUDIO_MODEL = "whisper-large-v3-turbo";
 
-export const groqProvider: MediaUnderstandingProvider = {
+export const groqMediaUnderstandingProvider: MediaUnderstandingProvider = {
   id: "groq",
   capabilities: ["audio"],
+  defaultModels: { audio: DEFAULT_GROQ_AUDIO_MODEL },
+  autoPriority: { audio: 20 },
   transcribeAudio: (req) =>
     transcribeOpenAiCompatibleAudio({
       ...req,

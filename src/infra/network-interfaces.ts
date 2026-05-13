@@ -1,8 +1,8 @@
 import os from "node:os";
 
 export type NetworkInterfacesSnapshot = ReturnType<typeof os.networkInterfaces>;
-export type NetworkInterfaceFamily = "IPv4" | "IPv6";
-export type ExternalNetworkInterfaceAddress = {
+type NetworkInterfaceFamily = "IPv4" | "IPv6";
+type ExternalNetworkInterfaceAddress = {
   name: string;
   address: string;
   family: NetworkInterfaceFamily;
@@ -20,11 +20,17 @@ function normalizeNetworkInterfaceFamily(
   return undefined;
 }
 
+export function readNetworkInterfaces(
+  networkInterfaces: () => NetworkInterfacesSnapshot = os.networkInterfaces,
+): NetworkInterfacesSnapshot {
+  return networkInterfaces();
+}
+
 export function safeNetworkInterfaces(
   networkInterfaces: () => NetworkInterfacesSnapshot = os.networkInterfaces,
 ): NetworkInterfacesSnapshot | undefined {
   try {
-    return networkInterfaces();
+    return readNetworkInterfaces(networkInterfaces);
   } catch {
     return undefined;
   }

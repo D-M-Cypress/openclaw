@@ -3,14 +3,15 @@ import path from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { makeTempWorkspace } from "../../test-helpers/workspace.js";
 import { captureEnv } from "../../test-utils/env.js";
+import { createCliRuntimeCapture } from "../test-runtime-capture.js";
 
-const runtimeLogs: string[] = [];
-const runtimeErrors: string[] = [];
+const { runtimeLogs, defaultRuntime, resetRuntimeCapture } = createCliRuntimeCapture();
 
 const serviceMock = vi.hoisted(() => ({
   label: "Gateway",
   loadedText: "loaded",
   notLoadedText: "not loaded",
+  stage: vi.fn(async (_opts?: { environment?: Record<string, string | undefined> }) => {}),
   install: vi.fn(async (_opts?: { environment?: Record<string, string | undefined> }) => {}),
   uninstall: vi.fn(async () => {}),
   stop: vi.fn(async () => {}),
@@ -25,23 +26,11 @@ vi.mock("../../daemon/service.js", () => ({
 }));
 
 vi.mock("../../runtime.js", () => ({
-  defaultRuntime: {
-    log: (message: string) => runtimeLogs.push(message),
-    error: (message: string) => runtimeErrors.push(message),
-    writeStdout: (value: string) => {
-      runtimeLogs.push(value.endsWith("\n") ? value.slice(0, -1) : value);
-    },
-    writeJson: (value: unknown, space = 2) => {
-      runtimeLogs.push(JSON.stringify(value, null, space > 0 ? space : undefined));
-    },
-    exit: (code: number) => {
-      throw new Error(`__exit__:${code}`);
-    },
-  },
+  defaultRuntime,
 }));
 
 const { runDaemonInstall } = await import("./install.js");
-const { clearConfigCache } = await import("../../config/config.js");
+const { clearConfigCache, clearRuntimeConfigSnapshot } = await import("../../config/config.js");
 
 async function readJson(filePath: string): Promise<Record<string, unknown>> {
   return JSON.parse(await fs.readFile(filePath, "utf8")) as Record<string, unknown>;
@@ -58,9 +47,7 @@ describe("runDaemonInstall integration", () => {
       "OPENCLAW_STATE_DIR",
       "OPENCLAW_CONFIG_PATH",
       "OPENCLAW_GATEWAY_TOKEN",
-      "CLAWDBOT_GATEWAY_TOKEN",
       "OPENCLAW_GATEWAY_PASSWORD",
-      "CLAWDBOT_GATEWAY_PASSWORD",
     ]);
     tempHome = await makeTempWorkspace("openclaw-daemon-install-int-");
     configPath = path.join(tempHome, "openclaw.json");
@@ -75,14 +62,12 @@ describe("runDaemonInstall integration", () => {
   });
 
   beforeEach(async () => {
-    runtimeLogs.length = 0;
-    runtimeErrors.length = 0;
     vi.clearAllMocks();
+    resetRuntimeCapture();
+    clearRuntimeConfigSnapshot();
     // Keep these defined-but-empty so dotenv won't repopulate from local .env.
     process.env.OPENCLAW_GATEWAY_TOKEN = "";
-    process.env.CLAWDBOT_GATEWAY_TOKEN = "";
     process.env.OPENCLAW_GATEWAY_PASSWORD = "";
-    process.env.CLAWDBOT_GATEWAY_PASSWORD = "";
     serviceMock.isLoaded.mockResolvedValue(false);
     await fs.writeFile(configPath, JSON.stringify({}, null, 2));
     clearConfigCache();
@@ -122,6 +107,32 @@ describe("runDaemonInstall integration", () => {
     expect(joined).toContain("MISSING_GATEWAY_TOKEN");
   });
 
+  it("refuses service install when config was written by a newer OpenClaw", async () => {
+    await fs.writeFile(
+      configPath,
+      JSON.stringify(
+        {
+          meta: {
+            lastTouchedVersion: "9999.1.1",
+          },
+          gateway: {
+            auth: {
+              mode: "token",
+            },
+          },
+        },
+        null,
+        2,
+      ),
+    );
+    clearConfigCache();
+
+    await expect(runDaemonInstall({ json: true, force: true })).rejects.toThrow("__exit__:1");
+
+    expect(serviceMock.install).not.toHaveBeenCalled();
+    expect(runtimeLogs.join("\n")).toContain("Refusing to install or rewrite the gateway service");
+  });
+
   it("auto-mints token when no source exists without embedding it into service env", async () => {
     await fs.writeFile(
       configPath,
@@ -145,8 +156,7 @@ describe("runDaemonInstall integration", () => {
     const updated = await readJson(configPath);
     const gateway = (updated.gateway ?? {}) as { auth?: { token?: string } };
     const persistedToken = gateway.auth?.token;
-    expect(typeof persistedToken).toBe("string");
-    expect((persistedToken ?? "").length).toBeGreaterThan(0);
+    expect(persistedToken).toEqual(expect.stringMatching(/^[0-9a-f]{48}$/));
 
     const installEnv = serviceMock.install.mock.calls[0]?.[0]?.environment;
     expect(installEnv?.OPENCLAW_GATEWAY_TOKEN).toBeUndefined();
